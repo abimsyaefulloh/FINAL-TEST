@@ -54,7 +54,7 @@ Staging :
 - api.staging.abimft.studentdumbways.my.id (5002)
 
 docker registry :
-- registry.abimft.studentdumbways.my.id
+- registry.abimft.studentdumbways.my.id (5001)
 
 Monitoring :
 - (Grafana) monitoring.abimft.studentdumbways.my.id (3001)
