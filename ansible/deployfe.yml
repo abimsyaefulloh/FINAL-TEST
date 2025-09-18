@@ -1,0 +1,111 @@
+# file: docker.yml
+- hosts: appserver
+  become: true
+  gather_facts: true
+
+  vars:
+    # --- app config ---
+    repo_url: "https://github.com/abimsyaefulloh/fe-dumbmerch.git"
+    repo_version: "main"
+    repo_dest: "/opt/fe-dumbmerch"
+
+    image_name: "fe-dumbmerch"
+    container_name: "fe-dumbmerch"
+
+    host_port: 3000 # port di host (ubah kalau mau)
+    container_port: 3000 # port di dalam container (ubah sesuai Dockerfile/app)
+
+    # arsitektur & user
+    docker_arch: "{{ 'arm64' if ansible_machine in ['aarch64','arm64'] else 'amd64' }}"
+    deploy_user: "{{ ansible_user | default('ubuntu') }}"
+
+  pre_tasks:
+    - name: Install prerequisites (git, tools)
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - git
+        state: present
+        update_cache: true
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker apt repository
+      apt_repository:
+        repo: "deb [arch={{ docker_arch }}] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker engine + tools (Ubuntu 24+ friendly)
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+          - python3-docker # modul python utk kendali Docker oleh Ansible
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker running & enabled
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add current SSH user to docker group (biar bisa 'docker' tanpa sudo)
+      user:
+        name: "{{ deploy_user }}"
+        groups: docker
+        append: true
+
+  tasks:
+    - name: Clone frontend repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dest }}"
+        version: "{{ repo_version }}"
+        force: true
+
+    - name: Build Docker image from repo
+      community.docker.docker_image:
+        name: "{{ image_name }}"
+        tag: "latest"
+        build:
+          path: "{{ repo_dest }}"
+          pull: true
+        source: build
+      register: build_result
+
+    - name: Run frontend container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ image_name }}:latest"
+        published_ports:
+          - "{{ host_port }}:{{ container_port }}"
+        restart_policy: always
+        state: started
+        recreate: "{{ build_result.changed | default(false) }}"
+
+    - name: Check UFW status (optional)
+      shell: ufw status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Open host_port on UFW if active (optional)
+      ufw:
+        rule: allow
+        port: "{{ host_port }}"
+        proto: tcp
+      when: "'Status: active' in (ufw_status.stdout | default(''))"
+
+    - name: Print access URL
+      debug:
+        msg: "Akses: http://{{ ansible_default_ipv4.address | default(inventory_hostname) }}:{{ host_port }}"

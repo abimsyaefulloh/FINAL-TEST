@@ -1,0 +1,38 @@
+---
+- hosts: gatewayserver
+  become: true
+
+  vars:
+    ssl_email: abimsyaefulloh2020@gmail.com
+    ssl_domains:
+      - abimft.studentdumbways.my.id
+      - api.abimft.studentdumbways.my.id
+      - staging.abimft.studentdumbways.my.id
+      - api.staging.abimft.studentdumbways.my.id
+      - registry.abimft.studentdumbways.my.id
+      - monitoring.abimft.studentdumbways.my.id
+      - prom.abimft.studentdumbways.my.id
+      - exporter.abimft.studentdumbways.my.id
+      - pipeline.abimft.studentdumbways.my.id
+  tasks:
+    - name: Install Certbot dan plugin Nginx
+      apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+        state: present
+        update_cache: yes
+
+    - name: Generate SSL certificate via Certbot
+      command: >
+        certbot --nginx -n --agree-tos
+        --email {{ ssl_email }}
+        {% for d in ssl_domains %}-d {{ d }} {% endfor %} --redirect
+      register: certbot_result
+      changed_when: "'Congratulations' in certbot_result.stdout"
+
+    - name: Reload Nginx jika sertifikat baru terpasang
+      systemd:
+        name: nginx
+        state: reloaded
+      when: certbot_result.changed
