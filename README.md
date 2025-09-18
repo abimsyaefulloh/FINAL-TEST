@@ -1,8 +1,6 @@
 # FINAL-TEST
 ## === 1. Provisioning ===
 ### AWS configure
-- T3.micro memiliki 2 vCPU dan 1 GiB memori  
-- T3.small memiliki 2 vCPU dan 2 GiB memori  
 ![Fotoscr](scr/Foto-0.png)  
 
 ### Membuat Server dengan Terraform  
