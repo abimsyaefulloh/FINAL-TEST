@@ -30,8 +30,6 @@ Buat file main.tf dan variables.tf untuk mendefinisikan resource:
 │ ├── ssl.yml # Playbook setup Certbot wildcard SSL + autorenew
 │ ├── deployfe.yml # Playbook deploy Frontend (Docker container) ke prod
 │ ├── deploybe.yml # Playbook deploy Backend (Docker container) ke prod
-│ ├── staging-deployfe.yml # Playbook deploy Frontend ke staging
-│ └── staging-deploybe.yml # Playbook deploy Backend ke staging
 ├── terraform/ # Konfigurasi Terraform untuk provisioning
 │ └── aws/
 │ ├── main.tf # Definisi resource AWS (VM, Security Group, etc)
