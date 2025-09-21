@@ -1,0 +1,88 @@
+---
+- name: Install Docker (pin to current versions & hold) - Ubuntu 22.04 Jammy
+  hosts: gatewayserver,appserver
+  become: true
+
+  vars:
+    repo_arch: "{{ 'arm64' if ansible_architecture in ['aarch64','arm64'] else 'amd64' }}"
+    docker_ce_version: "5:28.4.0-1~ubuntu.22.04~jammy"
+    docker_ce_cli_version: "5:28.4.0-1~ubuntu.22.04~jammy"
+    containerd_version: "1.7.27-1"
+    docker_compose_plugin_version: "2.39.2-1~ubuntu.22.04~jammy"
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+
+  tasks:
+    - name: Remove legacy Docker (docker.io, runc, etc)
+      ansible.builtin.apt:
+        name:
+          - docker
+          - docker.io
+          - docker-engine
+          - containerd
+          - runc
+        state: absent
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, gnupg, lsb-release]
+        state: present
+        update_cache: true
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Add Docker GPG key
+      ansible.builtin.shell: |
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args: { creates: /etc/apt/keyrings/docker.gpg }
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Add Docker APT repo
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ repo_arch }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+      when: ansible_facts.os_family == "Debian"
+
+    # Opsional: buang paket bila versi di mesin lebih tinggi & ingin benar-benar pas sama pin
+    - name: Unhold & purge docker packages (optional hard reset)
+      ansible.builtin.shell: |
+        set -e
+        for p in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
+          apt-mark unhold "$p" || true
+        done
+        apt-get remove -y docker-ce docker-ce-cli containerd.io docker-compose-plugin || true
+        apt-get autoremove -y || true
+      args: { warn: false }
+      when: false # ubah ke true jika perlu reset total
+
+    - name: Install pinned versions (allow downgrades if needed)
+      ansible.builtin.apt:
+        name:
+          - "docker-ce={{ docker_ce_version }}"
+          - "docker-ce-cli={{ docker_ce_cli_version }}"
+          - "containerd.io={{ containerd_version }}"
+          - "docker-compose-plugin={{ docker_compose_plugin_version }}"
+        state: present
+        update_cache: true
+        force_apt_get: true
+        allow_downgrades: true
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Hold packages (freeze versions)
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: "{{ docker_packages }}"
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Ensure docker service running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true

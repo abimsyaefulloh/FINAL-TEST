@@ -1,0 +1,21 @@
+- hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    nodeexp_name: node-exporter
+    nodeexp_image: prom/node-exporter:latest # ✅ Docker Hub
+
+  tasks:
+    - name: Run Node Exporter di tiap host
+      community.docker.docker_container:
+        name: "{{ nodeexp_name }}"
+        image: "{{ nodeexp_image }}"
+        restart_policy: always
+        state: started
+        ports:
+          - "9100:9100"
+        pid_mode: host
+        command: ["--path.rootfs=/host"]
+        volumes:
+          - "/:/host:ro,rslave"

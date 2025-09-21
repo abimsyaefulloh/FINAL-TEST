@@ -1,0 +1,152 @@
+---
+# ssl.yml — Let's Encrypt (HTTP-01 Standalone) tanpa API token
+# - Stop Nginx sebentar saat issue/renew
+# - Auto-renew via systemd timer (fallback cron)
+# - Hooks pre/post/deploy untuk stop/start/reload Nginx
+
+- hosts: gatewayserver
+  become: true
+
+  vars:
+    ssl_email: "abimsyaefulloh2020@gmail.com"
+    ssl_domains:
+      - abimft.studentdumbways.my.id
+      - api.abimft.studentdumbways.my.id
+      - staging.abimft.studentdumbways.my.id
+      - api.staging.abimft.studentdumbways.my.id
+      - registry.abimft.studentdumbways.my.id
+      - monitoring.abimft.studentdumbways.my.id
+      - prom.abimft.studentdumbways.my.id
+      - exporter.abimft.studentdumbways.my.id
+      - pipeline.abimft.studentdumbways.my.id
+
+    cert_name: "abimft.studentdumbways.my.id"
+    domains_cli: "{{ ssl_domains | map('regex_replace', '^(.*)$', '-d \\1') | join(' ') }}"
+
+  tasks:
+    - name: Install Certbot
+      apt:
+        name: certbot
+        state: present
+        update_cache: yes
+
+    - name: Buat folder hooks (pre/post/deploy)
+      file:
+        path: "/etc/letsencrypt/renewal-hooks/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - pre
+        - post
+        - deploy
+
+    - name: Pre-hook | stop Nginx saat renew
+      copy:
+        dest: /etc/letsencrypt/renewal-hooks/pre/stop-nginx.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop nginx || true
+          else
+            service nginx stop || true
+          fi
+
+    - name: Post-hook | start Nginx setelah renew
+      copy:
+        dest: /etc/letsencrypt/renewal-hooks/post/start-nginx.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          if command -v systemctl >/dev/null 2>&1; then
+            systemctl start nginx || true
+          else
+            service nginx start || true
+          fi
+
+    - name: Deploy-hook | reload Nginx bila cert berubah
+      copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          if command -v systemctl >/dev/null 2>&1; then
+            systemctl reload nginx || true
+          else
+            service nginx reload || true
+          fi
+
+    # Issue pertama: stop nginx -> certbot standalone -> start nginx
+    - name: Stop Nginx sementara (issue pertama kali)
+      systemd:
+        name: nginx
+        state: stopped
+      failed_when: false
+
+    - name: Issue/ensure certificate (HTTP-01 standalone, port 80)
+      command: >
+        certbot certonly -n --agree-tos
+        --email {{ ssl_email }}
+        --cert-name {{ cert_name }}
+        --preferred-challenges http
+        --standalone --http-01-port 80
+        {{ domains_cli }}
+        --keep-until-expiring
+      register: certbot_issue
+      changed_when:
+        "'Congratulations' in (certbot_issue.stdout | default('')) or
+        'Successfully received certificate' in (certbot_issue.stdout | default(''))"
+      failed_when: "certbot_issue.rc != 0"
+
+    - name: Start Nginx kembali
+      systemd:
+        name: nginx
+        state: started
+      failed_when: false
+
+    # Jadwal auto-renew
+    - name: Cek apakah certbot.timer tersedia
+      command: bash -lc "systemctl list-unit-files | grep -F '^certbot.timer'"
+      register: timer_check
+      changed_when: false
+      failed_when: false
+
+    - name: Enable & start certbot.timer jika tersedia
+      systemd:
+        name: certbot.timer
+        enabled: true
+        state: started
+      when: timer_check.rc == 0
+      failed_when: false
+
+    - name: Pasang cron fallback (kalau timer tidak ada)
+      cron:
+        name: "Let's Encrypt renew (standalone)"
+        user: root
+        job: "certbot renew -q"
+        minute: "0"
+        hour: "3,15"
+      when: timer_check.rc != 0
+
+    - name: (Opsional) Dry-run renew
+      command: certbot renew --dry-run
+      register: dryrun_result
+      changed_when: false
+      failed_when: false
+
+    - name: Info
+      debug:
+        msg:
+          - "Cert name   : {{ cert_name }}"
+          - "Domains     : {{ ssl_domains | join(', ') }}"
+          - "Cert path   : /etc/letsencrypt/live/{{ cert_name }}/fullchain.pem"
+          - "Key path    : /etc/letsencrypt/live/{{ cert_name }}/privkey.pem"
+          - "Renew method: {{ 'systemd timer' if timer_check.rc == 0 else 'cron fallback (03:00 & 15:00)' }}"

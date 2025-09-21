@@ -1,0 +1,17 @@
+---
+- hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    username: "abim"
+    password: "$6$XrNajB.LDIrSg6jG$vW1RzLvI2uDjHXvMzMZcx3Am9AnkWILeQaP0X.EARZFS6m6u6T7CNf6HLuhabS8ATxVqUS.opaUMEfySHMuSu1"
+  tasks:
+    - name: "Creating User {{ username }}"
+      ansible.builtin.user:
+        name: "{{ username }}"
+        password: "{{ password }}"
+        groups: sudo
+        state: present
+        system: false
+        append: yes
+        home: "/home/{{ username }}"

@@ -1,0 +1,168 @@
+---
+# Perlu collection: community.docker
+#   ansible-galaxy collection install community.docker
+
+- name: Deploy Backend + Postgres (gatewayserver)
+  hosts: gatewayserver
+  become: true
+  collections:
+    - community.docker
+
+  vars:
+    # Repo & lokasi backend
+    be_repo_url: "https://github.com/abimsyaefulloh/be-dumbmerch.git"
+    be_dest: "/opt/be-dumbmerch"
+    be_branch: "main"
+
+    # Port backend
+    be_port: 5000
+
+    # Database
+    db_user: "abim"
+    db_password: "abim123"
+    db_name: "dumbmerch"
+    db_port: 5432
+
+    # Keamanan: DB di-bind ke semua interface supaya bisa diakses remote
+    db_publish_binding: "0.0.0.0"
+
+    # Backend di-ekspos supaya FE di appserver bisa akses
+    backend_bind_ip: "0.0.0.0"
+
+    # Endpoint healthcheck backend
+    backend_health_path: "/api/v1/users"
+
+  tasks:
+    - name: Pastikan git terpasang
+      ansible.builtin.package:
+        name: git
+        state: present
+
+    - name: Clone/Update repo backend
+      ansible.builtin.git:
+        repo: "{{ be_repo_url }}"
+        dest: "{{ be_dest }}"
+        version: "{{ be_branch }}"
+        force: true
+
+    - name: Tulis file .env untuk backend
+      ansible.builtin.copy:
+        dest: "{{ be_dest }}/.env"
+        mode: "0644"
+        content: |
+          DB_HOST=db
+          DB_PORT=5432
+          DB_USER={{ db_user }}
+          DB_PASSWORD={{ db_password }}
+          DB_NAME={{ db_name }}
+          PORT={{ be_port }}
+
+    - name: Tulis docker-compose.yml untuk backend+db
+      ansible.builtin.copy:
+        dest: "{{ be_dest }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          version: "3.9"
+          services:
+            db:
+              image: postgres:14
+              container_name: be_db
+              restart: always
+              environment:
+                POSTGRES_USER: {{ db_user }}
+                POSTGRES_PASSWORD: {{ db_password }}
+                POSTGRES_DB: {{ db_name }}
+              ports:
+                - "{{ db_publish_binding }}:{{ db_port }}:5432"
+              volumes:
+                - db_data:/var/lib/postgresql/data
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U {{ db_user }} -d {{ db_name }} -h 127.0.0.1"]
+                interval: 10s
+                timeout: 5s
+                retries: 10
+                start_period: 10s
+
+            backend:
+              build:
+                context: "{{ be_dest }}"
+              container_name: backend
+              restart: always
+              ports:
+                - "{{ backend_bind_ip }}:{{ be_port }}:{{ be_port }}"
+              environment:
+                DB_HOST: db
+                DB_PORT: "5432"
+                DB_USER: {{ db_user }}
+                DB_PASSWORD: {{ db_password }}
+                DB_NAME: {{ db_name }}
+              volumes:
+                - "{{ be_dest }}/.env:/app/.env"
+              depends_on:
+                db:
+                  condition: service_healthy
+
+          volumes:
+            db_data: {}
+
+    - name: Jalankan docker compose (backend)
+      community.docker.docker_compose_v2:
+        project_src: "{{ be_dest }}"
+        state: present
+        build: always
+
+    - name: Info URL backend
+      ansible.builtin.debug:
+        msg: "Backend up: http://{{ ansible_host | default(inventory_hostname) }}:{{ be_port }}"
+
+- name: Deploy Frontend (appserver)
+  hosts: appserver
+  become: true
+  collections:
+    - community.docker
+
+  vars:
+    fe_repo_url: "https://github.com/abimsyaefulloh/fe-dumbmerch.git"
+    fe_dest: "/opt/fe-dumbmerch"
+    fe_branch: "main"
+    fe_port: 3000
+
+  tasks:
+    - name: Pastikan git terpasang
+      ansible.builtin.package:
+        name: git
+        state: present
+
+    - name: Clone/Update repo frontend
+      ansible.builtin.git:
+        repo: "{{ fe_repo_url }}"
+        dest: "{{ fe_dest }}"
+        version: "{{ fe_branch }}"
+        force: true
+
+    - name: Tulis docker-compose.yml untuk frontend
+      ansible.builtin.copy:
+        dest: "{{ fe_dest }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          version: "3.9"
+          services:
+            frontend:
+              build:
+                context: "{{ fe_dest }}"
+              container_name: frontend
+              restart: always
+              ports:
+                - "{{ fe_port }}:{{ fe_port }}"
+              environment:
+                PORT: "{{ fe_port }}"
+
+    - name: Jalankan docker compose (frontend)
+      community.docker.docker_compose_v2:
+        project_src: "{{ fe_dest }}"
+        state: present
+        build: always
+
+    - name: Info URL frontend
+      ansible.builtin.debug:
+        msg: "Frontend up: http://{{ ansible_host | default(inventory_hostname) }}:{{ fe_port }}"
